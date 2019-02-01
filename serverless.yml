@@ -1,0 +1,171 @@
+service: s3-static-website
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+
+resources:
+  Resources:
+    Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        PublicAccessBlockConfiguration: 
+          BlockPublicAcls: 'true'
+          BlockPublicPolicy: 'false'
+          IgnorePublicAcls: 'true'
+          RestrictPublicBuckets: 'false'
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    RedirectBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccessControl: PublicRead
+        PublicAccessBlockConfiguration: 
+          BlockPublicAcls: 'true'
+          BlockPublicPolicy: 'true'
+          IgnorePublicAcls: 'true'
+          RestrictPublicBuckets: 'true'
+        WebsiteConfiguration:
+          RedirectAllRequestsTo:
+            HostName: ${self:custom.domain}
+            Protocol: https
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - s3:GetObject
+              Resource:
+                Fn::Join: [
+                  "", [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "Bucket"
+                    },
+                    "/*"
+                  ]
+                ]
+    OriginAccessIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: ${self:custom.domain}-access-id
+    CloudFront:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName:
+                Fn::GetAtt: [Bucket, DomainName]
+              Id: S3-${self:custom.domain}
+              S3OriginConfig:
+                OriginAccessIdentity:
+                  Fn::Join: [
+                    "", [
+                      "origin-access-identity/cloudfront/",
+                      {
+                        "Ref": "OriginAccessIdentity"
+                      }
+                    ]
+                  ]
+          Enabled: "true"
+          DefaultRootObject: index.html
+          Aliases:
+            - ${self:custom.domain}
+            # - www.${self:custom.domain}
+          DefaultCacheBehavior:
+            TargetOriginId: S3-${self:custom.domain}
+            ForwardedValues:
+              QueryString: "false"
+            ViewerProtocolPolicy: redirect-to-https
+          ViewerCertificate:
+            AcmCertificateArn: ${self:custom.certificateArn}
+            SslSupportMethod: sni-only
+    CloudFrontRedirect:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Origins:
+            - DomainName:
+                Fn::Select: [ 1,
+                  Fn::Split: [ '://',
+                    Fn::GetAtt: [RedirectBucket, WebsiteURL]
+                  ]
+                ]
+              Id: S3-www-${self:custom.domain}
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: match-viewer
+          Enabled: "true"
+          Aliases:
+            - www.${self:custom.domain}
+          DefaultCacheBehavior:
+            TargetOriginId: S3-www-${self:custom.domain}
+            ForwardedValues:
+              QueryString: "false"
+            ViewerProtocolPolicy: allow-all
+          ViewerCertificate:
+            AcmCertificateArn: ${self:custom.certificateArn}
+            SslSupportMethod: sni-only
+    DnsRecord:
+      Type: "AWS::Route53::RecordSet"
+      Properties:
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt: [CloudFront, DomainName]
+          HostedZoneId: ${self:custom.zone}
+        HostedZoneName: ${self:custom.domain}.
+        Name: ${self:custom.domain}.
+        Type: 'A'
+    DnsRecordRedirect:
+      Type: "AWS::Route53::RecordSet"
+      Properties:
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt: [CloudFrontRedirect, DomainName]
+          HostedZoneId: ${self:custom.zone}
+        HostedZoneName: ${self:custom.domain}.
+        Name: www.${self:custom.domain}.
+        Type: 'A'
+    IPv6:
+      Type: "AWS::Route53::RecordSet"
+      Properties:
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt: [CloudFront, DomainName]
+          HostedZoneId: ${self:custom.zone}
+        HostedZoneName: ${self:custom.domain}.
+        Name: ${self:custom.domain}.
+        Type: 'AAAA'
+    IPv6Redirect:
+      Type: "AWS::Route53::RecordSet"
+      Properties:
+        AliasTarget:
+          DNSName:
+            Fn::GetAtt: [CloudFrontRedirect, DomainName]
+          HostedZoneId: ${self:custom.zone}
+        HostedZoneName: ${self:custom.domain}.
+        Name: www.${self:custom.domain}.
+        Type: 'AAAA'
+  Outputs:
+      BucketName:
+        Value:
+          Ref: Bucket
+
+custom:
+    # Environment variables
+    domain: ${file(env.yml):domain}
+    certificateArn: ${file(env.yml):certificateArn}
+    
+    # Amazon CloudFront Hosted Zone ID
+    # https://docs.aws.amazon.com/general/latest/gr/rande.html
+    zone: Z2FDTNDATAQYW2

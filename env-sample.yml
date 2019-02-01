@@ -1,0 +1,4 @@
+# Domain Name
+domain: DOMAIN_NAME
+# Certificate ARN
+certificateArn: ACM_CERTIFICATE_ARN
