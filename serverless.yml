@@ -80,7 +80,6 @@ resources:
           DefaultRootObject: index.html
           Aliases:
             - ${self:custom.domain}
-            # - www.${self:custom.domain}
           DefaultCacheBehavior:
             TargetOriginId: S3-${self:custom.domain}
             ForwardedValues:
